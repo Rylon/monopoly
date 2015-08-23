@@ -15,6 +15,7 @@ class Game
 		@last_roll = 0
 		@go_amount = opts[:go_amount]
 		@board = opts[:layout]
+		@initial_board = @board
 		@available_properties = @board
 		@chance_all = opts[:chance]
 		@chance = shuffle(@chance_all)
@@ -43,14 +44,16 @@ class Game
 		puts ''
 		@players.each do |player|
 			puts '[%s] Currency: %d, Properties: %d (%d mortgaged), Houses: %d, Hotels: %d' % [
+				player.name,
 				player.currency,
 				player.properties.count,
-				player.properties.select { |p| p.is_mortgaged? },
+				player.properties.select { |p| p.is_mortgaged? }.count,
 				player.num_houses, player.num_hotels
 			]
 			# TODO: There must be a better way to group a player's properties by set!
-			puts 'Properties:'
+			puts '- Properties: ' + player.properties.sort_by { |p| p.set }.collect { |p| p.name } * ', '
 		end
+		true
 	end
 	def get_all_hits
 		@players.inject { |sum, p| sum.merge(p.history) { |k, a_value, b_value| a_value + b_value }	}
@@ -66,7 +69,7 @@ class Game
 		if @bank_balance > amount
 			@bank_balance = @bank_balance - amount
 			player.currency = player.currency + amount
-			puts '[%s] Received £%d from bank (balance: £%d, bank balance: £%d' % [ player.name, amount, player.currency, bank_balance ]
+			puts '[%s] Received £%d from bank (balance: £%d, bank balance: £%d)' % [ player.name, amount, player.currency, bank_balance ]
 			true
 		else
 			player.currency = player.currency + bank_balance
@@ -87,7 +90,7 @@ class Game
 	def register_player(player)
 		@players << player
 	end
-	def play(turns = 1000)
+	def play(turns = 100000)
 		turns.to_i.times do
 			@turn = @turn + 1
 			puts '- Turn %d begins!' % @turn
@@ -410,7 +413,7 @@ class BasicProperty < Square
 	end
 	def add_houses(number)
 		housing_value = @house_cost * number
-		if @num_houses + number > 4
+		if (@num_houses + number) > 4
 			puts '[%s] Cannot place more than 4 houses on %s' % [ @owner.name, @name ]
 		else
 			if @owner.currency < housing_value then
