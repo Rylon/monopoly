@@ -985,6 +985,10 @@ behaviour = {
 	},
 	use_jail_card: Proc.new {|game, player|
 		player.use_jail_card if player.jail_free_cards > 0
+	},
+	trade_possible: Proc.new {|game, player|
+	},
+	trade_proposed: Proc.new {|game, player, proposer, property|
 	}
 }
 
