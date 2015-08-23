@@ -4,7 +4,7 @@ require 'pp'
 require 'pry'
 
 class Game
-	attr_accessor :hits, :board, :players, :num_dice, :die_size, :starting_currency, :available_properties, :chance, :community_chest, :bank_balance, :free_parking_balance, :player_starting_balance, :go_amount, :max_turns_in_jail, :last_roll, :turn, :completed
+	attr_accessor :hits, :board, :players, :num_dice, :die_size, :starting_currency, :available_properties, :chance, :community_chest, :bank_balance, :free_parking_balance, :player_starting_balance, :go_amount, :max_turns_in_jail, :last_roll, :turn, :completed, :num_houses, :num_hotels
 
 	def initialize(opts)
 		@hits = {}
@@ -22,6 +22,8 @@ class Game
 		@community_chest_all = opts[:community_chest]
 		@community_chest = shuffle(@community_chest_all)
 		@num_dice = opts[:num_dice]
+		@num_houses = opts[:num_houses]
+		@num_hotels = opts[:num_hotels]
 		@die_size = opts[:die_size]
 		@starting_currency = opts[:starting_currency]
 		@players = opts[:players]
@@ -102,18 +104,30 @@ class Game
 					puts '[%s] Go begins on %s (balance: £%d)' % [ turn.name , turn.current_square.name, turn.currency ]
 
 				turn.properties.each do |property|
-					if property.is_mortgaged?
-						turn.behaviour[:unmortgage_possible].call(self, turn, property) if turn.currency > property.cost
-					else
-						if property.set_owned?
-							case property.num_houses
-							when 0..3
-								turn.behaviour[:houses_available].call(self, turn, property) unless property.num_hotels > 0
-							when 4
-								turn.behaviour[:hotel_available].call(self, turn, property)
+					case property
+					when Station
+						if property.is_mortgaged?
+							turn.behaviour[:unmortgage_possible].call(self, turn, property) if turn.currency > property.cost
+						end
+					when Utility
+						if property.is_mortgaged?
+							turn.behaviour[:unmortgage_possible].call(self, turn, property) if turn.currency > property.cost
+						end
+					when BasicProperty
+						if property.is_mortgaged?
+							turn.behaviour[:unmortgage_possible].call(self, turn, property) if turn.currency > property.cost
+						else
+							if property.set_owned?
+								case property.num_houses
+								when 0..3
+									turn.behaviour[:houses_available].call(self, turn, property) unless property.num_hotels > 0
+								when 4
+									turn.behaviour[:hotel_available].call(self, turn, property)
+								end
 							end
 						end
 					end
+
 				end
 
 				turn.behaviour[:use_jail_card].call(self, turn) if turn.in_jail? and turn.jail_free_cards > 0
@@ -175,6 +189,7 @@ class Player
 		@turns_in_jail = 0
 		@jail_free_cards = 0
 		@currency = 0
+		@game = nil
 		@name = args[:name]
 		@board = []
 		@properties = []
@@ -413,18 +428,23 @@ class BasicProperty < Square
 	end
 	def add_houses(number)
 		housing_value = @house_cost * number
-		if (@num_houses + number) > 4
-			puts '[%s] Cannot place more than 4 houses on %s' % [ @owner.name, @name ]
-		else
-			if @owner.currency < housing_value then
-				puts '[%s] Unable to buy %d houses! (short of cash by £%d)' % [ @owner.name, number, (housing_value - @owner.currency) ]
-				false
+		if @owner.game.num_houses >= number
+			if (@num_houses + number) > 4
+				puts '[%s] Cannot place more than 4 houses on %s' % [ @owner.name, @name ]
 			else
-				@owner.currency = @owner.currency - housing_value
-				@num_houses = @num_houses + number
-				puts '[%s] Purchased %d houses on %s for £%d (balance: £%d)' % [ @owner.name, number, @name, housing_value, @owner.currency ]
-				true
+				if @owner.currency < housing_value then
+					puts '[%s] Unable to buy %d houses! (short of cash by £%d)' % [ @owner.name, number, (housing_value - @owner.currency) ]
+					false
+				else
+					@owner.currency = @owner.currency - housing_value
+					@owner.game.num_houses = @owner.game.num_houses - number
+					@num_houses = @num_houses + number
+					puts '[%s] Purchased %d houses on %s for £%d (balance: £%d)' % [ @owner.name, number, @name, housing_value, @owner.currency ]
+					true
+				end
 			end
+		else
+			puts '[%s] Not enough houses left to purchase %d more for %s' % [ @owner.name, number, @name ]
 		end
 		self
 	end
@@ -435,6 +455,7 @@ class BasicProperty < Square
 			false
 		else
 			@num_houses = @num_houses - number
+			@owner.game.num_houses = @owner.game.num_houses + number
 			@owner.currency = @owner.currency + housing_value
 			puts '[%s] Sold %d houses on %s for £%d (%d remaining)' % [ @owner.name, number, @name, housing_value, @num_houses ]
 		end
@@ -442,27 +463,45 @@ class BasicProperty < Square
 	end
 	def add_hotel
 		if @num_houses == 4
-			if @owner.currency < @hotel_cost then
-				puts '[%s] Unable to buy a hotel! (short of cash by £%d)' % [ @owner.name, (@hotel_cost - @owner.currency) ]
-				false
+			if @owner.game.num_houses > 0
+				if @owner.currency < @hotel_cost then
+					puts '[%s] Unable to buy a hotel! (short of cash by £%d)' % [ @owner.name, (@hotel_cost - @owner.currency) ]
+					false
+				else
+					@owner.currency = @owner.currency - @hotel_cost
+					@num_houses, @num_hotels = 0, 1
+					@owner.game.num_houses = @owner.game.num_houses + 4
+					@owner.game.num_hotels = @owner.game.num_hotels - 1
+					puts '[%s] Purchased a hotel on %s for £%d (balance: £%d)' % [ @owner.name, @name, @hotel_cost, @owner.currency ]
+					true
+				end			
 			else
-				@owner.currency = @owner.currency - @hotel_cost
-				@num_houses, @num_hotels = 0, 1
-				puts '[%s] Purchased a hotel on %s for £%d (balance: £%d)' % [ @owner.name, @name, @hotel_cost, @owner.currency ]
-				true
-			end			
+				puts '[%s] Not enough hotels left to purchase %d more for %s' % [ @owner.name, number, @name ]
+			end
 		end
 		self
 	end
 	def sell_hotel
-		housing_value = @hotel_cost / 2
 		if @num_hotels < 1
 			puts "[%s] Can't sell hotel on %s, as there isn't one!" % [ @owner.name, @name ]
 		else
+		 	housing_value = (@hotel_cost / 2) 
 			@num_hotels = 0
-			@num_houses = 4
+			@owner.game.num_hotels = @owner.game.num_hotels + 1
 			@owner.currency = @owner.currency + housing_value
-			puts '[%s] Sold hotel on %s for £%d (devolved to %d houses)' % [ @owner.name, @name, housing_value, @num_houses ]
+			puts '[%s] Sold hotel on %s for £%d' % [ @owner.name, @name, housing_value ]
+			case @owner.game.num_houses
+			when 4
+				@owner.game.num_houses = @owner.game.num_houses - 4
+				@num_houses = 4
+				puts '[%s] Devolved %s to %d houses' % [ @owner.name, @name, @num_houses ]
+			when 1..3
+				sell_houses(4 - @owner.game.num_houses)
+				puts '[%s] Devolved %s to %d houses as 4 were not available' % [ @owner.name, @name, @num_houses ]
+			when 0
+				sell_houses(4)
+				puts '[%s] Devolved to undeveloped site as no houses were available' % [ @owner.name, @name, @num_houses ]
+			end
 		end
 		self
 	end
